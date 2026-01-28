@@ -1,0 +1,141 @@
+# UR5 Project — Commands Cheat Sheet (final)
+
+Assumptions:
+- ROS 2: Humble
+- All commands are run from the project root
+- MoveIt is running and provides /check_state_validity
+- Optional Python virtual environment (.venv)
+
+--------------------------------------------------
+
+0) Sanity checks
+
+cd <project_root>
+pwd
+ls -l assets/ur5_generated.urdf
+ls -d src
+ls -d ur5_ws
+
+--------------------------------------------------
+
+1) Run offline planning pipeline (IK + planning → trajectory_eaik.npz)
+
+source .venv/bin/activate
+export UR5_URDF_PATH=$PWD/assets/ur5_generated.urdf
+PYTHONPATH=$PWD/src python3 src/run_pipeline_demo.py
+ls -lh trajectory_eaik.npz
+
+--------------------------------------------------
+
+2) Build ROS 2 workspace (ur5_traj_tools)
+
+source /opt/ros/humble/setup.bash
+cd ur5_ws
+colcon build --symlink-install --packages-select ur5_traj_tools
+source install/setup.bash
+ros2 pkg list | grep ur5_traj_tools
+cd ..
+
+--------------------------------------------------
+
+3) Start MoveIt + RViz (must be running for collision checks)
+
+source /opt/ros/humble/setup.bash
+ros2 launch ur_moveit_config ur_moveit.launch.py ur_type:=ur5
+
+Check service:
+ros2 service list | grep check_state_validity
+
+--------------------------------------------------
+
+4) Trajectory playback in RViz
+
+source /opt/ros/humble/setup.bash
+source ur5_ws/install/setup.bash
+
+ros2 run ur5_traj_tools traj_playback --ros-args \
+  -p traj_file:=$PWD/trajectory_eaik.npz \
+  -p rate:=50.0 \
+  -p loop:=false \
+  -p check_collision:=true
+
+--------------------------------------------------
+
+5) Collision report (CSV)
+
+source /opt/ros/humble/setup.bash
+source ur5_ws/install/setup.bash
+
+ros2 run ur5_traj_tools traj_check --ros-args \
+  -p traj_file:=$PWD/trajectory_eaik.npz \
+  -p csv_out:=$PWD/collision_report.csv \
+  -p state_validity_service:=/check_state_validity
+
+awk -F, 'NR>1{if($3==0)c++} END{print "colliding points:", c+0}' collision_report.csv
+
+--------------------------------------------------
+
+6) Interactive joint-space validity check
+
+source /opt/ros/humble/setup.bash
+source ur5_ws/install/setup.bash
+
+ros2 run ur5_traj_tools angle_sender --ros-args \
+  -p service:=/check_state_validity
+
+Example input (radians):
+0 -1.57 1.57 0 0 0
+
+--------------------------------------------------
+
+7) Interactive task-space pose validity check
+
+source /opt/ros/humble/setup.bash
+source ur5_ws/install/setup.bash
+export UR5_URDF_PATH=$PWD/assets/ur5_generated.urdf
+
+ros2 run ur5_traj_tools pose_sender --ros-args \
+  -p service:=/check_state_validity
+
+Examples:
+0.45 0.20 0.42
+0.45 0.20 0.42 0 0 0 1
+
+--------------------------------------------------
+
+8) Collision map generation (q1 vs q2 grid)
+
+Quick test (21x21):
+
+source /opt/ros/humble/setup.bash
+source ur5_ws/install/setup.bash
+
+ros2 run ur5_traj_tools collision_map_joint --ros-args \
+  -p service:=/check_state_validity \
+  -p q1_N:=21 -p q2_N:=21 \
+  -p out_csv:=$PWD/collision_map_TEST.csv \
+  -p out_npz:=$PWD/collision_map_TEST.npz \
+  -p out_png:=$PWD/collision_map_TEST.png
+
+Full map (81x81):
+
+ros2 run ur5_traj_tools collision_map_joint --ros-args \
+  -p service:=/check_state_validity \
+  -p q1_N:=81 -p q2_N:=81 \
+  -p out_csv:=$PWD/collision_map_q1_q2.csv \
+  -p out_npz:=$PWD/collision_map_q1_q2.npz \
+  -p out_png:=$PWD/collision_map_q1_q2.png
+
+--------------------------------------------------
+
+Pipeline overview:
+
+assets/ur5_generated.urdf
+        ↓
+offline IK + planning
+        ↓
+trajectory_eaik.npz
+        ↓
+ROS 2 (ur5_traj_tools)
+        ↓
+MoveIt collision checks
